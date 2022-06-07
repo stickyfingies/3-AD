@@ -120,12 +120,13 @@ export class Graphics {
     }
 
     constructor(logService?: LogFn[], workerLogService?: LogFn[]) {
+        // inject logging functions
         if (logService) {
             [log, report] = logService;
-            [workerLog, workerReport] = logService;
+            [workerLog, workerReport] = workerLogService ?? logService;
         }
-        if (workerLogService) [workerLog, workerReport] = workerLogService;
 
+        // Useful for debugging the library itself
         log(import.meta.url);
 
         if (typeof SharedArrayBuffer === 'undefined') {
@@ -142,18 +143,32 @@ export class Graphics {
                     break;
                 }
                 default: {
-                    report(`Unknown message type ${data.type}`)
+                    // should NEVER happen in production.
+                    report(`Unknown message type ${data.type}`);
                     break;
                 }
             }
         }
     }
 
-    init() {
+    /**
+     * Initialize the whole graphics stack.  This starts communication with
+     * the worker thread, attaches listeners, and creates the canvas.
+     * 
+     * @param canvasID ID of HTMLCanvasElement to render to.
+     *                 Creates a new element if one cannot be found.
+     */
+    init(canvasID: string = 'main-canvas') {
         this.assignIdToObject(this.#camera);
         this.#scene.add(this.#camera);
 
-        const offscreenCanvas = document.getElementById('main-canvas') as HTMLCanvasElement;
+        // find (or create) canvas element
+        let offscreenCanvas = document.getElementById(canvasID) as HTMLCanvasElement | null;
+        if (!offscreenCanvas) {
+            offscreenCanvas = document.createElement('canvas');
+            offscreenCanvas.setAttribute('id', canvasID);
+            document.body.appendChild(offscreenCanvas);
+        }
         // @ts-ignore - Some DOM typing bull-shit
         const offscreen = offscreenCanvas.transferControlToOffscreen();
 
@@ -221,6 +236,7 @@ export class Graphics {
      */
     private submitCommand(cmd: IGraphicsCommand, immediate = false, transfer?: OffscreenCanvas) {
         if (immediate) {
+            // @ts-ignore - dumb TS doesn't realize you can transfer an OffscreenCanvas
             this.#worker.postMessage(cmd, transfer ? [transfer] : undefined);
         } else {
             this.#commandQueue.push(cmd);

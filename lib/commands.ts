@@ -13,6 +13,12 @@ export type GraphicsUploadTextureCmd = {
     ui: boolean
 }
 
+export type GraphicsAddCameraCmd = {
+    type: 'addCamera',
+    data: any,
+    id: number,
+}
+
 export type GraphicsAddObjectCmd = {
     type: 'addObject',
     data: any,
@@ -44,6 +50,7 @@ export type GraphicsUpdateMaterialCmd = {
 export type IGraphicsCommand
     = GraphicsInitCmd
     | GraphicsUploadTextureCmd
+    | GraphicsAddCameraCmd
     | GraphicsAddObjectCmd
     | GraphicsRemoveObjectCmd
     | GraphicsResizeCmd

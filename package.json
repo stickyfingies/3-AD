@@ -9,6 +9,7 @@
   "license": "MPL 2.0",
   "type": "module",
   "scripts": {
+    "dev": "vite",
     "build": "vite build",
     "postbuild": "node util/postbuild.js",
     "preview": "vite preview"
