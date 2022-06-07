@@ -10,7 +10,7 @@ The following is an example of the exact same demo program, set up with a multit
 
 There are no benchmarks for this project yet, so it's not certain whether this is _actually_ faster for real-world graphical applications.  Though, in theory, it would out-perform a single-threaded approach if there were frequent user inputs or UI interactions.
 
-This is the renderer used in The Grove, a hobby RPG game made with web technologies. I made this library for it because ~~the game needed the performance~~ **I wanted to.**
+This is the renderer used in [The Grove](https://github.com/stickyfingies/grove), a hobby RPG game made with web technologies. I made this library for it because ~~the game needed the performance~~ **I wanted to.**
 
 <table>
 <tr>
