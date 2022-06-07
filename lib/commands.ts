@@ -9,7 +9,7 @@ export type GraphicsUploadTextureCmd = {
     imageId: string,
     imageWidth: number,
     imageHeight: number,
-    imageData: ArrayBufferView,
+    imageDataBuffer: ArrayBufferLike,
     ui: boolean
 }
 

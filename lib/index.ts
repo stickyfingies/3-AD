@@ -234,7 +234,7 @@ export class Graphics {
      * Submit a command to the backend.  Note that unless `immediate` is set to true, the commands
      * will actually be queued until the next call to `flushCommands()`.
      */
-    private submitCommand(cmd: IGraphicsCommand, immediate = false, transfer?: OffscreenCanvas) {
+    private submitCommand(cmd: IGraphicsCommand, immediate = false, transfer?: Transferable) {
         if (immediate) {
             // @ts-ignore - dumb TS doesn't realize you can transfer an OffscreenCanvas
             this.#worker.postMessage(cmd, transfer ? [transfer] : undefined);
@@ -323,11 +323,11 @@ export class Graphics {
         this.submitCommand({
             type: 'uploadTexture',
             imageId: uuid,
-            imageData: imageData.data,
+            imageDataBuffer: imageData.data.buffer,
             imageWidth: width,
             imageHeight: height,
             ui,
-        });
+        }, false, imageData.data.buffer);
     }
 
     private extractMaterialTextures(material: Material, ui: boolean) {

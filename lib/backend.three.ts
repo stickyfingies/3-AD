@@ -150,20 +150,20 @@ export default class GraphicsBackend {
 
     /** Emplaces raw texture data into a ThreeJS texture object */
     uploadTexture({
-        imageId, imageData, imageWidth, imageHeight, ui,
+        imageId, imageDataBuffer, imageWidth, imageHeight, ui,
     }: GraphicsUploadTextureCmd) {
+        const imageData = new Uint8ClampedArray(imageDataBuffer);
         const map = new DataTexture(imageData, imageWidth, imageHeight, RGBAFormat);
         map.wrapS = RepeatWrapping;
         map.wrapT = RepeatWrapping;
         map.magFilter = LinearFilter;
+        // disable MipMapping for UI elements
         map.minFilter = ui ? LinearFilter : LinearMipMapLinearFilter;
         map.generateMipmaps = true;
         map.flipY = true;
         map.needsUpdate = true;
 
         this.#textureCache.set(imageId, map);
-
-        log(imageId);
     }
 
     /** Updates the material of a renderable object */
