@@ -348,7 +348,6 @@ export class Graphics {
         else this.#scene.add(object);
 
         object.traverse((node) => {
-            // log(node);
             // debugger;
             if (node instanceof Mesh || node instanceof Sprite || node instanceof Light) {
                 const id = this.assignIdToObject(node);
@@ -363,12 +362,32 @@ export class Graphics {
                             this.extractMaterialTextures(material, ui);
                         }
                     }
+
+                    // ! Delete image data so ThreeJS::Object3D::toJSON() doesn't try to serialize
+                    // ! images - as this is a VERY costly procedure which 3-AD already does faster.
+                    // ? can this process be automated
+                    if (node.material.map) delete node.material.map.image;
+                    if (node.material.mapcap) delete node.material.matcap.image;
+                    if (node.material.alphaMap) delete node.material.alphaMap.image; //
+                    if (node.material.bumpMap) delete node.material.bumpMap.image;
+                    if (node.material.normalMap) delete node.material.normalMap.image; //
+                    if (node.material.displacementMap) delete node.material.displacementMap.image;
+                    if (node.material.roughnessMap) delete node.material.roughnessMap.image;
+                    if (node.material.metalnessMap) delete node.material.metalnessMap.image;
+                    if (node.material.emissiveMap) delete node.material.emissiveMap.image;
+                    if (node.material.specularMap) delete node.material.specularMap.image; //
+                    if (node.material.envMap) delete node.material.envMap.image;
+                    if (node.material.lightMap) delete node.material.lightMap.image;
+                    if (node.material.aoMap) delete node.material.aoMap.image;
                 }
+                
+                // A very expensive call if `node.material` contains images.
+                const json = node.toJSON();
 
                 // send that bitch to the backend
                 this.submitCommand({
                     type: 'addObject',
-                    data: node.toJSON(),
+                    data: json,
                     id,
                     ui,
                 });

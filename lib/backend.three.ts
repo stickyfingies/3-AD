@@ -22,6 +22,7 @@ import {
     Scene,
     Sprite,
     WebGLRenderer,
+    LinearToneMapping,
 } from 'three';
 
 import {
@@ -92,6 +93,8 @@ export default class GraphicsBackend {
             context,
             antialias: true,
         });
+        this.#renderer.toneMapping = LinearToneMapping;
+		this.#renderer.toneMappingExposure = 1.0;
         this.#renderer.setClearColor(0x000000);
         this.#renderer.autoClear = false;
         this.#renderer.shadowMap.enabled = true;
@@ -189,8 +192,6 @@ export default class GraphicsBackend {
         }
 
         const object = new ObjectLoader().parse(data);
-
-        // if (object.children.length) console.log(data);
 
         if (object instanceof Mesh || object instanceof Sprite) {
             if (object.material.length) {
