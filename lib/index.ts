@@ -23,6 +23,7 @@ import {
     Scene,
     Sprite,
     Texture,
+    Vector3,
 } from 'three';
 
 // @ts-ignore - TSC doesn't understand Vite module ?queries
@@ -142,6 +143,10 @@ export class Graphics {
                     workerLog(data.message);
                     break;
                 }
+                case 'report': {
+                    workerReport(data.message);
+                    break;
+                }
                 default: {
                     // should NEVER happen in production.
                     report(`Unknown message type ${data.type}`);
@@ -258,6 +263,13 @@ export class Graphics {
                 this.#idToObject.delete(id);
                 this.#availableObjectIds.push(id);
             }
+        });
+    }
+
+    createParticleSystem(position: Vector3) {
+        this.submitCommand({
+            type: 'createParticleSystem',
+            position: position.toArray()
         });
     }
 

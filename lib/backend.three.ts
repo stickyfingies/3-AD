@@ -23,10 +23,19 @@ import {
     Sprite,
     WebGLRenderer,
     LinearToneMapping,
+    Vector3,
+    ShaderMaterial,
+    Points,
+    SphereBufferGeometry,
+    Color,
+    BufferAttribute,
+    BufferGeometry,
+    Material,
 } from 'three';
 
 import {
     GraphicsAddObjectCmd,
+    GraphicsCreateParticleSystemCmd,
     GraphicsInitCmd,
     GraphicsRemoveObjectCmd,
     GraphicsResizeCmd,
@@ -34,8 +43,15 @@ import {
     GraphicsUploadTextureCmd,
 } from './commands';
 
-function log(message: any) {
-    globalThis.postMessage({ type: 'log', message })
+const postMessage = (type: string) => (message: any) => globalThis.postMessage({ type, message });
+const log = postMessage('log');
+const report = postMessage('report');
+
+interface ParticleSystem {
+    object: Points,
+    geometry: BufferGeometry,
+    point_count: number,
+    age: number
 }
 
 /**
@@ -72,6 +88,8 @@ export default class GraphicsBackend {
     /** map of texture identifiers to raw image data */
     #textureCache = new Map<string, DataTexture>();
 
+    #particle_systems = new Set<ParticleSystem>();
+
     /** number of elements per each transform matrix in the shared array buffer */
     readonly #elementsPerTransform = 16;
 
@@ -94,7 +112,7 @@ export default class GraphicsBackend {
             antialias: true,
         });
         this.#renderer.toneMapping = LinearToneMapping;
-		this.#renderer.toneMappingExposure = 1.0;
+        this.#renderer.toneMappingExposure = 1.0;
         this.#renderer.setClearColor(0x000000);
         this.#renderer.autoClear = false;
         this.#renderer.shadowMap.enabled = true;
@@ -117,9 +135,45 @@ export default class GraphicsBackend {
         // grid1.position.y = 1.1;
         // this.#scene.add(grid1);
 
+        const updateParticleSystem = (particle_system: ParticleSystem) => {
+            const { object, geometry, point_count, age } = particle_system;
+
+            for (let i = 0; i < point_count; i++) {
+                const x = geometry.attributes.position.getX(i);
+                const y = geometry.attributes.position.getY(i);
+                const z = geometry.attributes.position.getZ(i);
+                const position = new Vector3(x, y, z);
+
+                const wiggleScale = 6.66;
+                position.x += wiggleScale * (Math.random() - 0.5);
+                position.y += wiggleScale * (Math.random() - 0.5);
+                position.z += wiggleScale * (Math.random() - 0.5);
+                geometry.attributes.position.setXYZ(i, position.x, position.y, position.z);
+            }
+            geometry.attributes.position.needsUpdate = true;
+
+            const factor = 0.1;
+            let pulseFactor = Math.cos(factor * age + Math.PI) * 0.033 + 0.1;
+            object.scale.set(pulseFactor, pulseFactor, pulseFactor)
+            object.rotation.z = factor * Math.sin(age * 0.75);
+            object.rotation.y = factor * age * 0.75;
+            object.rotation.z = factor * Math.cos(age * 0.75);
+
+            particle_system.age += 1;
+            return particle_system.age > 30;
+        }
+
         // graphics thread render loop
         const render = () => {
             this.readTransformsFromArray(transformArray);
+
+            for (const sys of this.#particle_systems) {
+                const should_remove = updateParticleSystem(sys);
+                if (should_remove) {
+                    this.#scene.remove(sys.object);
+                    this.#particle_systems.delete(sys);
+                }
+            }
 
             this.#renderer.clear();
             this.#renderer.render(this.#scene, this.#camera);
@@ -132,6 +186,64 @@ export default class GraphicsBackend {
         // start rendering
         requestAnimationFrame(render);
         log(`Ready - ThreeJS renderer v.${REVISION}`);
+    }
+
+    createParticleSystem({ position }: GraphicsCreateParticleSystemCmd) {
+        var cubeGeometry = new SphereBufferGeometry(20, 50, 50);
+
+        // @ts-ignore
+        var particleCount = cubeGeometry.attributes.position.length;
+
+        if (!cubeGeometry.attributes.color) {
+            const buffer = new BufferAttribute(new Float32Array(particleCount * 3), 3)
+            cubeGeometry.setAttribute('color', buffer);
+        };
+        for (let i = 0; i < particleCount; i++) {
+            // const color = new Color().setHSL(Math.random(), 0.9, 0.7);
+            // cubeGeometry.attributes.color.setXYZ(i, color.r, color.g, color.b);
+            cubeGeometry.attributes.color.setXYZ(i, 1, 0, 0);
+        }
+        cubeGeometry.attributes.color.needsUpdate = true;
+
+        var shaderMaterial = new ShaderMaterial(
+            {
+                transparent: true,
+                alphaTest: 0.5,
+                vertexShader: `
+                attribute vec3 color;
+                varying vec3 vColor;
+                void main() 
+                {
+                    vColor = color; // set RGB color associated to vertex; use later in fragment shader.
+                    vec4 mvPosition = modelViewMatrix * vec4( position, 1.0 );
+
+                    // option (1): draw particles at constant size on screen
+                    // gl_PointSize = size;
+                    // option (2): scale particles as objects in 3D space
+                    gl_PointSize = 10.0 * ( 10.0 / length( mvPosition.xyz ) );
+                    gl_Position = projectionMatrix * mvPosition;
+                }
+                `,
+                fragmentShader: `
+                varying vec3 vColor;
+                void main() 
+                {
+                    gl_FragColor = vec4(vColor, 1.0 );
+                }
+                `,
+            });
+
+        var particleCube = new Points(cubeGeometry, shaderMaterial);
+        particleCube.position.fromArray(position);
+        particleCube.scale.set(0.1, 0.1, 0.1)
+        this.#scene.add(particleCube);
+
+        this.#particle_systems.add({
+            object: particleCube,
+            geometry: cubeGeometry,
+            point_count: particleCount,
+            age: 0
+        });
     }
 
     /** Copy object transforms into their corresponding ThreeJS renderable */
@@ -180,6 +292,9 @@ export default class GraphicsBackend {
 
     /** Adds a renderable object to the scene */
     addObject({ id, data, ui }: GraphicsAddObjectCmd) {
+        data.images = [];
+        data.textures = [];
+
         const matMap = new Map<string, MeshPhongMaterial>();
         if (data.materials) {
             for (const materialData of data.materials) {
@@ -192,7 +307,7 @@ export default class GraphicsBackend {
 
         if (object instanceof Mesh || object instanceof Sprite) {
             if (object.material.length) {
-                const matList: MeshPhongMaterial[] = [];
+                const matList: Material[] = [];
                 for (const mat of object.material) {
                     matList.push(matMap.get(mat.uuid)!);
                 }

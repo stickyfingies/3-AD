@@ -44,6 +44,11 @@ export type GraphicsUpdateMaterialCmd = {
     id: number,
 }
 
+export type GraphicsCreateParticleSystemCmd = {
+    type: 'createParticleSystem',
+    position: [number, number, number]
+}
+
 /**
  * Represents any of the possible commands from frontend -> backend
  */
@@ -54,4 +59,5 @@ export type IGraphicsCommand
     | GraphicsAddObjectCmd
     | GraphicsRemoveObjectCmd
     | GraphicsResizeCmd
-    | GraphicsUpdateMaterialCmd;
+    | GraphicsUpdateMaterialCmd
+    | GraphicsCreateParticleSystemCmd;
