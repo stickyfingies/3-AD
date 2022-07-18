@@ -353,34 +353,33 @@ export class Graphics {
                 const id = this.assignIdToObject(node);
 
                 if ('material' in node) {
-                    if (node.material instanceof Material) {
-                        // object only has one material
-                        this.extractMaterialTextures(node.material, ui);
-                    } else {
-                        // object has several materials
-                        for (const material of node.material) {
-                            this.extractMaterialTextures(material, ui);
-                        }
-                    }
+                    // Get a list of all the materials in this object/scene_node
+                    let materials = [];
+                    if (node.material instanceof Material) materials = [node.material];
+                    else materials = node.material;
 
-                    // ! Delete image data so ThreeJS::Object3D::toJSON() doesn't try to serialize
-                    // ! images - as this is a VERY costly procedure which 3-AD already does faster.
-                    // ? can this process be automated
-                    if (node.material.map) delete node.material.map.image;
-                    if (node.material.mapcap) delete node.material.matcap.image;
-                    if (node.material.alphaMap) delete node.material.alphaMap.image; //
-                    if (node.material.bumpMap) delete node.material.bumpMap.image;
-                    if (node.material.normalMap) delete node.material.normalMap.image; //
-                    if (node.material.displacementMap) delete node.material.displacementMap.image;
-                    if (node.material.roughnessMap) delete node.material.roughnessMap.image;
-                    if (node.material.metalnessMap) delete node.material.metalnessMap.image;
-                    if (node.material.emissiveMap) delete node.material.emissiveMap.image;
-                    if (node.material.specularMap) delete node.material.specularMap.image; //
-                    if (node.material.envMap) delete node.material.envMap.image;
-                    if (node.material.lightMap) delete node.material.lightMap.image;
-                    if (node.material.aoMap) delete node.material.aoMap.image;
+                    for (const material of materials) {
+                        this.extractMaterialTextures(material, ui);
+                        // https://github.com/stickyfingies/3-AD/issues/1
+                        // ! Delete image data so ThreeJS::Object3D::toJSON() doesn't try to serialize
+                        // ! images - as this is a VERY costly procedure which 3-AD already does faster.
+                        // ? can this process be automated
+                        if (material.mapcap) delete material.matcap.image;
+                        if (material.map) delete material.map.image;
+                        if (material.alphaMap) delete material.alphaMap.image; //
+                        if (material.bumpMap) delete material.bumpMap.image;
+                        if (material.normalMap) delete material.normalMap.image; //
+                        if (material.displacementMap) delete material.displacementMap.image;
+                        if (material.roughnessMap) delete material.roughnessMap.image;
+                        if (material.metalnessMap) delete material.metalnessMap.image;
+                        if (material.emissiveMap) delete material.emissiveMap.image;
+                        if (material.specularMap) delete material.specularMap.image; //
+                        if (material.envMap) delete material.envMap.image;
+                        if (material.lightMap) delete material.lightMap.image;
+                        if (material.aoMap) delete material.aoMap.image;
+                    }
                 }
-                
+
                 // A very expensive call if `node.material` contains images.
                 const json = node.toJSON();
 

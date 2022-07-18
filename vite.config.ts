@@ -12,11 +12,11 @@ export default defineConfig({
       entry: resolvePath('lib/index.ts'),
       name: '3-AD',
       formats: ['es'],
-      fileName: (format) => `index.${format}.js`
+      fileName: format => `index.${format}.js`
     },
     rollupOptions: {
       // input: {
-      //   main: resolvePath('examples/index.html'),
+      //   main: resolvePath('index.html'),
       // },
       external: ['three'],
     }

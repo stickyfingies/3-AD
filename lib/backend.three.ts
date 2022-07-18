@@ -180,9 +180,6 @@ export default class GraphicsBackend {
 
     /** Adds a renderable object to the scene */
     addObject({ id, data, ui }: GraphicsAddObjectCmd) {
-        data.images = [];
-        data.textures = [];
-
         const matMap = new Map<string, MeshPhongMaterial>();
         if (data.materials) {
             for (const materialData of data.materials) {
