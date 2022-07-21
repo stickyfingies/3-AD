@@ -46,7 +46,7 @@ export type GraphicsUpdateMaterialCmd = {
 
 export type GraphicsCreateParticleSystemCmd = {
     type: 'createParticleSystem',
-    position: [number, number, number]
+    emitter_id: number
 }
 
 /**

@@ -23,14 +23,10 @@ import {
     Sprite,
     WebGLRenderer,
     LinearToneMapping,
-    Vector3,
-    ShaderMaterial,
     Points,
-    SphereBufferGeometry,
-    Color,
-    BufferAttribute,
     BufferGeometry,
     Material,
+    Float32BufferAttribute,
 } from 'three';
 
 import {
@@ -48,10 +44,10 @@ const log = postMessage('log');
 const report = postMessage('report');
 
 interface ParticleSystem {
-    object: Points,
+    emitter: Points,
     geometry: BufferGeometry,
-    point_count: number,
-    age: number
+    age: number,
+    positions: number[];
 }
 
 /**
@@ -136,31 +132,35 @@ export default class GraphicsBackend {
         // this.#scene.add(grid1);
 
         const updateParticleSystem = (particle_system: ParticleSystem) => {
-            const { object, geometry, point_count, age } = particle_system;
+            /**
+             * ! TODO
+             * Move this computation from CPU->GPU by embedding it in the shader
+             */
+            const { geometry, positions } = particle_system;
 
-            for (let i = 0; i < point_count; i++) {
-                const x = geometry.attributes.position.getX(i);
-                const y = geometry.attributes.position.getY(i);
-                const z = geometry.attributes.position.getZ(i);
-                const position = new Vector3(x, y, z);
-
-                const wiggleScale = 6.66;
-                position.x += wiggleScale * (Math.random() - 0.5);
-                position.y += wiggleScale * (Math.random() - 0.5);
-                position.z += wiggleScale * (Math.random() - 0.5);
-                geometry.attributes.position.setXYZ(i, position.x, position.y, position.z);
+            for (let i = 0; i < positions.length; i += 3) {
+                const wiggleScale = 0.066;
+                positions[i + 0] += wiggleScale * (Math.random() - 0.5);
+                positions[i + 1] += wiggleScale * (Math.random() - 0.5);
+                positions[i + 2] += wiggleScale * (Math.random() - 0.5);
             }
-            geometry.attributes.position.needsUpdate = true;
 
-            const factor = 0.1;
-            let pulseFactor = Math.cos(factor * age + Math.PI) * 0.033 + 0.1;
-            object.scale.set(pulseFactor, pulseFactor, pulseFactor)
-            object.rotation.z = factor * Math.sin(age * 0.75);
-            object.rotation.y = factor * age * 0.75;
-            object.rotation.z = factor * Math.cos(age * 0.75);
+            // log(`P ${positions.length}}`);
+            // log(`A ${geometry.attributes.position.count}`);
+            if (positions.length === geometry.attributes.position.count * 3) {
+                // log('copying [dynamic positions] -> [buffer positions]');
+                for (let i = 0; i < geometry.attributes.position.count; i++) {
+                    geometry.attributes.position.setXYZ(i, positions[i * 3 + 0], positions[i * 3 + 1], positions[i * 3 + 2]);
+                }
+                geometry.attributes.position.needsUpdate = true;
+            }
+            else {
+                log('re-creating [buffer positions]');
+                geometry.attributes.position = new Float32BufferAttribute(positions, 3);
+            }
 
             particle_system.age += 1;
-            return particle_system.age > 30;
+            return particle_system.age > 30000;
         }
 
         // graphics thread render loop
@@ -170,7 +170,7 @@ export default class GraphicsBackend {
             for (const sys of this.#particle_systems) {
                 const should_remove = updateParticleSystem(sys);
                 if (should_remove) {
-                    this.#scene.remove(sys.object);
+                    this.#scene.remove(sys.emitter);
                     this.#particle_systems.delete(sys);
                 }
             }
@@ -188,61 +188,23 @@ export default class GraphicsBackend {
         log(`Ready - ThreeJS renderer v.${REVISION}`);
     }
 
-    createParticleSystem({ position }: GraphicsCreateParticleSystemCmd) {
-        var cubeGeometry = new SphereBufferGeometry(20, 50, 50);
+    createParticleSystem({ emitter_id }: GraphicsCreateParticleSystemCmd) {
+        const emitter = this.#idToObject.get(emitter_id)! as Points;
+        const geometry = emitter.geometry;
 
-        // @ts-ignore
-        var particleCount = cubeGeometry.attributes.position.length;
-
-        if (!cubeGeometry.attributes.color) {
-            const buffer = new BufferAttribute(new Float32Array(particleCount * 3), 3)
-            cubeGeometry.setAttribute('color', buffer);
-        };
-        for (let i = 0; i < particleCount; i++) {
-            // const color = new Color().setHSL(Math.random(), 0.9, 0.7);
-            // cubeGeometry.attributes.color.setXYZ(i, color.r, color.g, color.b);
-            cubeGeometry.attributes.color.setXYZ(i, 1, 0, 0);
+        const positions: number[] = [];
+        for (let i = 0; i < geometry.attributes.position.count; i++) {
+            const x = geometry.attributes.position.getX(i);
+            const y = geometry.attributes.position.getY(i);
+            const z = geometry.attributes.position.getZ(i);
+            positions.push(x, y, z);
         }
-        cubeGeometry.attributes.color.needsUpdate = true;
-
-        var shaderMaterial = new ShaderMaterial(
-            {
-                transparent: true,
-                alphaTest: 0.5,
-                vertexShader: `
-                attribute vec3 color;
-                varying vec3 vColor;
-                void main() 
-                {
-                    vColor = color; // set RGB color associated to vertex; use later in fragment shader.
-                    vec4 mvPosition = modelViewMatrix * vec4( position, 1.0 );
-
-                    // option (1): draw particles at constant size on screen
-                    // gl_PointSize = size;
-                    // option (2): scale particles as objects in 3D space
-                    gl_PointSize = 10.0 * ( 10.0 / length( mvPosition.xyz ) );
-                    gl_Position = projectionMatrix * mvPosition;
-                }
-                `,
-                fragmentShader: `
-                varying vec3 vColor;
-                void main() 
-                {
-                    gl_FragColor = vec4(vColor, 1.0 );
-                }
-                `,
-            });
-
-        var particleCube = new Points(cubeGeometry, shaderMaterial);
-        particleCube.position.fromArray(position);
-        particleCube.scale.set(0.1, 0.1, 0.1)
-        this.#scene.add(particleCube);
 
         this.#particle_systems.add({
-            object: particleCube,
-            geometry: cubeGeometry,
-            point_count: particleCount,
-            age: 0
+            emitter,
+            geometry,
+            age: 0,
+            positions
         });
     }
 
@@ -267,18 +229,18 @@ export default class GraphicsBackend {
     uploadTexture({
         imageId, imageDataBuffer, imageWidth, imageHeight, ui,
     }: GraphicsUploadTextureCmd) {
-        const imageData = new Uint8ClampedArray(imageDataBuffer);
-        const map = new DataTexture(imageData, imageWidth, imageHeight, RGBAFormat);
-        map.wrapS = RepeatWrapping;
-        map.wrapT = RepeatWrapping;
-        map.magFilter = LinearFilter;
+        const imageData = new Uint8Array(imageDataBuffer);
+        const texture = new DataTexture(imageData, imageWidth, imageHeight, RGBAFormat);
+        texture.wrapS = RepeatWrapping;
+        texture.wrapT = RepeatWrapping;
+        texture.magFilter = LinearFilter;
         // disable MipMapping for UI elements
-        map.minFilter = ui ? LinearFilter : LinearMipMapLinearFilter;
-        map.generateMipmaps = true;
-        map.flipY = true;
-        map.needsUpdate = true;
+        texture.minFilter = ui ? LinearFilter : LinearMipMapLinearFilter;
+        texture.generateMipmaps = true;
+        texture.flipY = true;
+        texture.needsUpdate = true;
 
-        this.#textureCache.set(imageId, map);
+        this.#textureCache.set(imageId, texture);
     }
 
     /** Updates the material of a renderable object */
@@ -305,7 +267,7 @@ export default class GraphicsBackend {
 
         const object = new ObjectLoader().parse(data);
 
-        if (object instanceof Mesh || object instanceof Sprite) {
+        if (object instanceof Mesh || object instanceof Points || object instanceof Sprite) {
             if (object.material.length) {
                 const matList: Material[] = [];
                 for (const mat of object.material) {

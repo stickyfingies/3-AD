@@ -15,15 +15,20 @@
  */
 
 import {
+    AdditiveBlending,
+    BufferAttribute,
     Light,
     Material,
     Mesh,
     Object3D,
     PerspectiveCamera,
+    Points,
+    PointsMaterial,
     Scene,
+    SphereBufferGeometry,
     Sprite,
     Texture,
-    Vector3,
+    TextureLoader,
 } from 'three';
 
 // @ts-ignore - TSC doesn't understand Vite module ?queries
@@ -266,11 +271,43 @@ export class Graphics {
         });
     }
 
-    createParticleSystem(position: Vector3) {
+    async createParticleEmitter(texturePath: string) {
+        const geometry = new SphereBufferGeometry(2, 10, 10);
+
+        if (!geometry.attributes.color) {
+            log('creating [color attribute]');
+            // @ts-ignore
+            const count = geometry.attributes.position.length;
+            const buffer = new BufferAttribute(new Float32Array(count * 3), 3);
+            geometry.setAttribute('color', buffer);
+        };
+        for (let i = 0; i < geometry.attributes.color.count; i++) {
+            // const color = new Color().setHSL(Math.random(), 0.9, 0.7);
+            // cubeGeometry.attributes.color.setXYZ(i, color.r, color.g, color.b);
+            geometry.attributes.color.setXYZ(i, 1, 0, 0);
+        }
+        geometry.attributes.color.needsUpdate = true;
+
+        const texture = await new TextureLoader().loadAsync(texturePath);
+        const material = new PointsMaterial({
+            transparent: true,
+            alphaMap: texture,
+            map: texture,
+            color: 0xff0000,
+            blending: AdditiveBlending
+        });
+
+        const emitter = new Points(geometry, material);
+        emitter.position.set(0, 20, 0);
+
+        this.addObjectToScene(emitter);
+
         this.submitCommand({
             type: 'createParticleSystem',
-            position: position.toArray()
+            emitter_id: emitter.userData.meshId
         });
+
+        return emitter;
     }
 
     /**
@@ -361,7 +398,7 @@ export class Graphics {
 
         object.traverse((node) => {
             // debugger;
-            if (node instanceof Mesh || node instanceof Sprite || node instanceof Light) {
+            if (node instanceof Mesh || node instanceof Points || node instanceof Sprite || node instanceof Light) {
                 const id = this.assignIdToObject(node);
 
                 if ('material' in node) {
