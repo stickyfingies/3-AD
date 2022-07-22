@@ -17,6 +17,7 @@
 import {
     AdditiveBlending,
     BufferAttribute,
+    BufferGeometry,
     Light,
     Material,
     Mesh,
@@ -24,11 +25,10 @@ import {
     PerspectiveCamera,
     Points,
     PointsMaterial,
+    PointsMaterialParameters,
     Scene,
-    SphereBufferGeometry,
     Sprite,
     Texture,
-    TextureLoader,
 } from 'three';
 
 // @ts-ignore - TSC doesn't understand Vite module ?queries
@@ -271,30 +271,38 @@ export class Graphics {
         });
     }
 
-    async createParticleEmitter(texturePath: string) {
-        const geometry = new SphereBufferGeometry(2, 10, 10);
+    createParticleEmitter(material_description: PointsMaterialParameters) {
+        const geometry = new BufferGeometry();
 
-        if (!geometry.attributes.color) {
-            log('creating [color attribute]');
-            // @ts-ignore
-            const count = geometry.attributes.position.length;
+        const count = 1000;
+
+        if (!geometry.attributes.position) {
+            log('creating geometry.attributes.position');
             const buffer = new BufferAttribute(new Float32Array(count * 3), 3);
-            geometry.setAttribute('color', buffer);
+            geometry.setAttribute('position', buffer);
         };
-        for (let i = 0; i < geometry.attributes.color.count; i++) {
-            // const color = new Color().setHSL(Math.random(), 0.9, 0.7);
-            // cubeGeometry.attributes.color.setXYZ(i, color.r, color.g, color.b);
-            geometry.attributes.color.setXYZ(i, 1, 0, 0);
+        for (let i = 0; i < geometry.attributes.position.count; i++) {
+            geometry.attributes.position.setXYZ(i, 0, 0, 0);
         }
-        geometry.attributes.color.needsUpdate = true;
+        geometry.attributes.position.needsUpdate = true;
 
-        const texture = await new TextureLoader().loadAsync(texturePath);
+        if (!geometry.attributes.velocity) {
+            log('creating geometry.attributes.velocity');
+            const count = geometry.attributes.position.count;
+            const buffer = new BufferAttribute(new Float32Array(count * 3), 3);
+            geometry.setAttribute('velocity', buffer);
+        };
+        for (let i = 0; i < geometry.attributes.velocity.count; i++) {
+            const random = () => Math.random() - 0.5;
+            geometry.attributes.velocity.setXYZ(i, random(), random(), random());
+        }
+        geometry.attributes.velocity.needsUpdate = true;
+
         const material = new PointsMaterial({
             transparent: true,
-            alphaMap: texture,
-            map: texture,
             color: 0xff0000,
-            blending: AdditiveBlending
+            blending: AdditiveBlending,
+            ...material_description
         });
 
         const emitter = new Points(geometry, material);

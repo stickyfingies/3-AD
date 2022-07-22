@@ -48,6 +48,7 @@ interface ParticleSystem {
     geometry: BufferGeometry,
     age: number,
     positions: number[];
+    velocities: number[];
 }
 
 /**
@@ -136,13 +137,17 @@ export default class GraphicsBackend {
              * ! TODO
              * Move this computation from CPU->GPU by embedding it in the shader
              */
-            const { geometry, positions } = particle_system;
+            const { geometry, positions, velocities } = particle_system;
 
             for (let i = 0; i < positions.length; i += 3) {
-                const wiggleScale = 0.066;
-                positions[i + 0] += wiggleScale * (Math.random() - 0.5);
-                positions[i + 1] += wiggleScale * (Math.random() - 0.5);
-                positions[i + 2] += wiggleScale * (Math.random() - 0.5);
+                // const wiggleScale = 0.066;
+                // velocities[i + 0] = wiggleScale * (Math.random() - 0.5);
+                // velocities[i + 1] = wiggleScale * (Math.random() - 0.5);
+                // velocities[i + 2] = wiggleScale * (Math.random() - 0.5);
+
+                positions[i + 0] += velocities[i + 0];
+                positions[i + 1] += velocities[i + 1];
+                positions[i + 2] += velocities[i + 2];
             }
 
             // log(`P ${positions.length}}`);
@@ -193,6 +198,7 @@ export default class GraphicsBackend {
         const geometry = emitter.geometry;
 
         const positions: number[] = [];
+        const velocities: number[] = [];
         for (let i = 0; i < geometry.attributes.position.count; i++) {
             const x = geometry.attributes.position.getX(i);
             const y = geometry.attributes.position.getY(i);
@@ -200,11 +206,19 @@ export default class GraphicsBackend {
             positions.push(x, y, z);
         }
 
+        for (let i = 0; i < geometry.attributes.velocity.count; i++) {
+            const x = geometry.attributes.velocity.getX(i);
+            const y = geometry.attributes.velocity.getY(i);
+            const z = geometry.attributes.velocity.getZ(i);
+            velocities.push(x, y, z);
+        }
+
         this.#particle_systems.add({
             emitter,
             geometry,
             age: 0,
-            positions
+            positions,
+            velocities
         });
     }
 
