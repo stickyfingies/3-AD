@@ -46,7 +46,9 @@ export type GraphicsUpdateMaterialCmd = {
 
 export type GraphicsCreateParticleSystemCmd = {
     type: 'createParticleSystem',
-    emitter_id: number
+    texture_id: string,
+    emitter_id: number,
+    particle_count: number
 }
 
 /**

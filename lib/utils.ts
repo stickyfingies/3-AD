@@ -1,4 +1,6 @@
 import {
+    BufferAttribute,
+    BufferGeometry,
     CylinderBufferGeometry,
     Mesh,
     MeshPhongMaterial,
@@ -50,5 +52,37 @@ export default class GraphicsUtils {
         canvas.width = width;
         canvas.height = height;
         return { canvas, ctx: canvas.getContext('2d')! };
+    }
+
+    static getRawImageData(image: HTMLImageElement): ImageData {
+        const { width, height } = image;
+        const { ctx } = GraphicsUtils.scratchCanvasContext(width, height);
+        ctx.drawImage(image, 0, 0);
+        return ctx.getImageData(0, 0, width, height);
+    }
+
+    static updateBufferAttribute(geometry: BufferGeometry, name: string, raw_data: number[]) {
+        const { itemSize, count } = geometry.getAttribute(name);
+
+        // replace buffer with an appropriately sized one, if necessary
+        if (raw_data.length !== count * itemSize) {
+            const replacement = new BufferAttribute(new Float32Array(raw_data.length), itemSize);
+            geometry.setAttribute(name, replacement);
+        }
+
+        // write data to attribute buffer
+        const buffer = geometry.getAttribute(name);
+        for (let i = 0; i < count; i++) {
+            if (itemSize === 3) {
+                const x = raw_data[i * 3 + 0];
+                const y = raw_data[i * 3 + 1];
+                const z = raw_data[i * 3 + 2];
+                buffer.setXYZ(i, x, y, z);
+            }
+            else if (itemSize === 1) {
+                buffer.setX(i, raw_data[i]);
+            }
+        }
+        buffer.needsUpdate = true;
     }
 }

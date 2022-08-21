@@ -16,7 +16,7 @@ fs.readFile(path, 'utf8', (err, data) => {
 
     // I want to call "yalc publish" in a platform-independant way, which doesn't utterly
     // fail if yalc isn't installed on the host system.
-    exec('yalc publish', (error, stdout, stderr) => {
+    exec('yalc publish --push', (error, stdout, stderr) => {
         if (error) { /* yalc: command not found */ }
         if (stdout) console.log('\n\x1b[32m%s\x1b[0m', stdout);
         if (stderr) console.error('\n\x1b[31m%s\x1b[0m', stderr);

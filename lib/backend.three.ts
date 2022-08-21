@@ -10,7 +10,6 @@ import {
     MaterialLoader,
     Matrix4,
     Mesh,
-    MeshPhongMaterial,
     Object3D,
     ObjectLoader,
     OrthographicCamera,
@@ -26,8 +25,13 @@ import {
     Points,
     BufferGeometry,
     Material,
-    Float32BufferAttribute,
+    Vector3,
+    AdditiveBlending,
+    ShaderMaterial,
+    BufferAttribute,
 } from 'three';
+
+// import CSM from 'three-csm';
 
 import {
     GraphicsAddObjectCmd,
@@ -38,18 +42,11 @@ import {
     GraphicsUpdateMaterialCmd,
     GraphicsUploadTextureCmd,
 } from './commands';
+import { Particle, ParticleSystem, updateParticleSystem } from './particles';
 
 const postMessage = (type: string) => (message: any) => globalThis.postMessage({ type, message });
 const log = postMessage('log');
 const report = postMessage('report');
-
-interface ParticleSystem {
-    emitter: Points,
-    geometry: BufferGeometry,
-    age: number,
-    positions: number[];
-    velocities: number[];
-}
 
 /**
  * Graphics backend designed to be ran on a WebWorker
@@ -86,6 +83,15 @@ export default class GraphicsBackend {
     #textureCache = new Map<string, DataTexture>();
 
     #particle_systems = new Set<ParticleSystem>();
+
+    // #cascade = new CSM({
+    //     maxFar: this.#camera.far,
+    //     cascades: 4,
+    //     shadowMapSize: 1024,
+    //     lightDirection: new Vector3(1, -1, 1).normalize(),
+    //     camera: this.#camera,
+    //     parent: this.#scene
+    // });
 
     /** number of elements per each transform matrix in the shared array buffer */
     readonly #elementsPerTransform = 16;
@@ -132,60 +138,31 @@ export default class GraphicsBackend {
         // grid1.position.y = 1.1;
         // this.#scene.add(grid1);
 
-        const updateParticleSystem = (particle_system: ParticleSystem) => {
-            /**
-             * ! TODO
-             * Move this computation from CPU->GPU by embedding it in the shader
-             */
-            const { geometry, positions, velocities } = particle_system;
-
-            for (let i = 0; i < positions.length; i += 3) {
-                // const wiggleScale = 0.066;
-                // velocities[i + 0] = wiggleScale * (Math.random() - 0.5);
-                // velocities[i + 1] = wiggleScale * (Math.random() - 0.5);
-                // velocities[i + 2] = wiggleScale * (Math.random() - 0.5);
-
-                positions[i + 0] += velocities[i + 0];
-                positions[i + 1] += velocities[i + 1];
-                positions[i + 2] += velocities[i + 2];
-            }
-
-            // log(`P ${positions.length}}`);
-            // log(`A ${geometry.attributes.position.count}`);
-            if (positions.length === geometry.attributes.position.count * 3) {
-                // log('copying [dynamic positions] -> [buffer positions]');
-                for (let i = 0; i < geometry.attributes.position.count; i++) {
-                    geometry.attributes.position.setXYZ(i, positions[i * 3 + 0], positions[i * 3 + 1], positions[i * 3 + 2]);
-                }
-                geometry.attributes.position.needsUpdate = true;
-            }
-            else {
-                log('re-creating [buffer positions]');
-                geometry.attributes.position = new Float32BufferAttribute(positions, 3);
-            }
-
-            particle_system.age += 1;
-            return particle_system.age > 30000;
-        }
+        let previous: number = null!;
 
         // graphics thread render loop
-        const render = () => {
+        const render = (timestamp: number) => {
+            requestAnimationFrame(render);
+
+            previous ??= timestamp;
+            const delta = (timestamp - previous) / 100.0;
+            previous = timestamp;
+
             this.readTransformsFromArray(transformArray);
 
             for (const sys of this.#particle_systems) {
-                const should_remove = updateParticleSystem(sys);
+                const should_remove = updateParticleSystem(sys, this.#camera, delta);
                 if (should_remove) {
                     this.#scene.remove(sys.emitter);
                     this.#particle_systems.delete(sys);
                 }
             }
-
+        
+            // this.#cascade.update(this.#camera.matrix);
             this.#renderer.clear();
             this.#renderer.render(this.#scene, this.#camera);
             this.#renderer.clearDepth();
             this.#renderer.render(this.#uiscene, this.#uicamera);
-
-            requestAnimationFrame(render);
         };
 
         // start rendering
@@ -193,32 +170,82 @@ export default class GraphicsBackend {
         log(`Ready - ThreeJS renderer v.${REVISION}`);
     }
 
-    createParticleSystem({ emitter_id }: GraphicsCreateParticleSystemCmd) {
-        const emitter = this.#idToObject.get(emitter_id)! as Points;
-        const geometry = emitter.geometry;
+    createParticleSystem({ emitter_id, texture_id, particle_count }: GraphicsCreateParticleSystemCmd) {
+        const geometry = new BufferGeometry();
 
-        const positions: number[] = [];
-        const velocities: number[] = [];
-        for (let i = 0; i < geometry.attributes.position.count; i++) {
-            const x = geometry.attributes.position.getX(i);
-            const y = geometry.attributes.position.getY(i);
-            const z = geometry.attributes.position.getZ(i);
-            positions.push(x, y, z);
+        function buffer(name: string, element_size: number) {
+            const attribute = new BufferAttribute(new Float32Array(particle_count * element_size), element_size);
+            attribute.needsUpdate = true;
+            geometry.setAttribute(name, attribute);
         }
 
-        for (let i = 0; i < geometry.attributes.velocity.count; i++) {
-            const x = geometry.attributes.velocity.getX(i);
-            const y = geometry.attributes.velocity.getY(i);
-            const z = geometry.attributes.velocity.getZ(i);
-            velocities.push(x, y, z);
+        buffer('position', 3);
+        buffer('size', 1);
+        buffer('angle', 1);
+
+        const particles: Particle[] = [];
+        for (let i = 0; i < particle_count; i++) {
+            const random = () => (Math.random() - 0.5);
+            particles.push({
+                position: new Vector3(0, 0, 0),
+                velocity: new Vector3(random(), random(), random()).normalize().divideScalar(120),
+                acceleration: new Vector3(0, 0, 0),
+                angle: Math.random() * Math.PI,
+                size: Math.random() * 4
+            });
         }
+
+        const uniforms = {
+            diffuseTexture: { value: this.#textureCache.get(texture_id) },
+            pointMultiplier: { value: 1080 / (2.0 * Math.tan(0.5 * 60.0 * Math.PI / 180.0)) }
+        };
+
+        const vertexShader = `
+        attribute float size;
+        attribute float angle;
+        uniform float pointMultiplier;
+        varying vec4 vColour;
+        varying vec2 vAngle;
+        void main() {
+            vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+            gl_Position = projectionMatrix * mvPosition;
+            gl_PointSize = size * pointMultiplier / gl_Position.w;
+            vAngle = vec2(cos(angle), sin(angle));
+            vColour = vec4(1.0, 1.0, 1.0, 1.0);
+        }`;
+
+        const fragmentShader = `
+        uniform sampler2D diffuseTexture;
+        varying vec4 vColour;
+        varying vec2 vAngle;
+        void main() {
+            vec2 coords = (gl_PointCoord - 0.5) * mat2(vAngle.x, vAngle.y, -vAngle.y, vAngle.x) + 0.5;
+            gl_FragColor = texture2D(diffuseTexture, coords) * vColour;
+        }`;
+
+        const experimaterial = new ShaderMaterial({
+            uniforms,
+            vertexShader,
+            fragmentShader,
+            blending: AdditiveBlending,
+            transparent: true,
+            depthWrite: false,
+            depthTest: true,
+        });
+
+        const emitter = new Points(geometry, experimaterial);
+        emitter.frustumCulled = false;
+        emitter.matrixAutoUpdate = false;
+        
+        this.#scene.add(emitter);
+        this.#idToObject.set(emitter_id, emitter);
 
         this.#particle_systems.add({
             emitter,
             geometry,
+            particles,
             age: 0,
-            positions,
-            velocities
+            max_age: 1000
         });
     }
 
@@ -233,7 +260,7 @@ export default class GraphicsBackend {
             // there will be a period of time where `matrix` consists of entirely zeroes.
             // ThreeJS doesn't particularly like when scale elements are zero, so set them
             // to something else as a fix.
-            if (matrix.elements[0] === 0) matrix.makeScale(0.1, 0.1, 0.1);
+            if (matrix.elements[0] === 0) matrix.makeScale(1, 1, 1);
 
             object.matrix.copy(matrix);
         }
@@ -249,7 +276,7 @@ export default class GraphicsBackend {
         texture.wrapT = RepeatWrapping;
         texture.magFilter = LinearFilter;
         // disable MipMapping for UI elements
-        texture.minFilter = ui ? LinearFilter : LinearMipMapLinearFilter;
+        texture.minFilter = (ui ? LinearFilter : LinearMipMapLinearFilter);
         texture.generateMipmaps = true;
         texture.flipY = true;
         texture.needsUpdate = true;
@@ -260,9 +287,7 @@ export default class GraphicsBackend {
     /** Updates the material of a renderable object */
     updateMaterial({ material, id }: GraphicsUpdateMaterialCmd) {
         const mat = this.deserializeMaterial(material);
-
-        const mesh = this.#idToObject.get(id)! as Mesh | Sprite;
-
+        const mesh = this.#idToObject.get(id)! as Mesh | Points | Sprite;
         mesh.material = mat;
     }
 
@@ -271,26 +296,25 @@ export default class GraphicsBackend {
         data.images = [];
         data.textures = [];
 
-        const matMap = new Map<string, MeshPhongMaterial>();
-        if (data.materials) {
-            for (const materialData of data.materials) {
-                const mat = this.deserializeMaterial(materialData);
-                matMap.set(mat.uuid, mat);
-            }
-        }
+        // uuid -> Material
+        const lookupTable = new Map<string, Material>();
+        (data.materials as any[])
+            ?.map(json => this.deserializeMaterial(json))
+            .forEach(material => lookupTable.set(material.uuid, material));
 
         const object = new ObjectLoader().parse(data);
 
         if (object instanceof Mesh || object instanceof Points || object instanceof Sprite) {
-            if (object.material.length) {
-                const matList: Material[] = [];
-                for (const mat of object.material) {
-                    matList.push(matMap.get(mat.uuid)!);
-                }
-                object.material = matList;
+            if (object.material instanceof Array) {
+                // if the object has a list of materials (skybox), inject list of materials
+                object.material = object.material.map(({ uuid }) => lookupTable.get(uuid)!);
             } else {
-                object.material = matMap.get(object.material.uuid);
+                // object has only one material - inject it
+                object.material = lookupTable.get(object.material.uuid);
             }
+
+            object.castShadow = true;
+            object.receiveShadow = true;
         }
 
         object.matrixAutoUpdate = false;
@@ -326,33 +350,32 @@ export default class GraphicsBackend {
 
     /** Takes a JSON material description and creates a tangible (textured) ThreeJS material */
     private deserializeMaterial(json: any) {
-        const {
-            map, alphaMap, normalMap, specularMap,
-        } = json;
+        // find all the keys in 'json' that correspond to texture properties
+        const textureKeys = Object.getOwnPropertyNames(json)
+            .filter(key => key.slice(-3).toLocaleLowerCase() === 'map')
+            .filter(key => json[key] !== null);
 
-        // [?] can this process be automated
-        delete json.map; //
-        delete json.matcap;
-        delete json.alphaMap; //
-        delete json.bumpMap;
-        delete json.normalMap; //
-        delete json.displacementMap;
-        delete json.roughnessMap;
-        delete json.metalnessMap;
-        delete json.emissiveMap;
-        delete json.specularMap; //
-        delete json.envMap;
-        delete json.lightMap;
-        delete json.aoMap;
+        // then, create a map from [key -> uuid]
+        const key_to_uuid = new Map<string, string>();
+        textureKeys.forEach((key) => {
+            key_to_uuid.set(key, json[key]);
+        });
 
-        const mat = new MaterialLoader().parse(json) as MeshPhongMaterial;
+        // delete the keys from json so that MaterialLoader doesn't see them
+        // (it will try to look up the texture uuid's, fail, and then complain)
+        key_to_uuid.forEach((_, key) => delete json[key]);
 
-        // assign textures
-        if (map) mat.map = this.#textureCache.get(map)!;
-        if (alphaMap) mat.alphaMap = this.#textureCache.get(alphaMap)!;
-        if (normalMap) mat.normalMap = this.#textureCache.get(normalMap)!;
-        if (specularMap) mat.specularMap = this.#textureCache.get(specularMap)!;
+        // parse the material JSON
+        const material = new MaterialLoader().parse(json);
 
-        return mat;
+        // inject real textures into the material using the [key:uuid] map created above
+        key_to_uuid.forEach((uuid, key) => {
+            // @ts-ignore
+            material[key] = this.#textureCache.get(uuid)!;
+        });
+
+        // this.#cascade.setupMaterial(material);
+
+        return material;
     }
 }

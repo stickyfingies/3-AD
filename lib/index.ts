@@ -27,8 +27,10 @@ import {
     PointsMaterial,
     PointsMaterialParameters,
     Scene,
+    ShaderMaterial,
     Sprite,
     Texture,
+    TextureLoader,
 } from 'three';
 
 // @ts-ignore - TSC doesn't understand Vite module ?queries
@@ -226,10 +228,10 @@ export class Graphics {
      * the backend, so materials need to be manually flushed after updates
      * @note Broken for groups
      */
-    updateMaterial(object: Mesh | Sprite, ui = false) {
+    updateMaterial(object: Mesh | Points | Sprite, ui = false) {
         object.traverse((node) => {
-            if (node instanceof Mesh || node instanceof Sprite) {
-                this.extractMaterialTextures(node.material as Material, ui);
+            if (node instanceof Mesh || node instanceof Points || node instanceof Sprite) {
+                this.extractMaterialTextures(node.material, ui);
 
                 this.submitCommand({
                     type: 'updateMaterial',
@@ -271,48 +273,18 @@ export class Graphics {
         });
     }
 
-    createParticleEmitter(material_description: PointsMaterialParameters) {
-        const geometry = new BufferGeometry();
+    createParticleEmitter(map: Texture) {
+        this.uploadTexture(map, false);
 
-        const count = 1000;
-
-        if (!geometry.attributes.position) {
-            log('creating geometry.attributes.position');
-            const buffer = new BufferAttribute(new Float32Array(count * 3), 3);
-            geometry.setAttribute('position', buffer);
-        };
-        for (let i = 0; i < geometry.attributes.position.count; i++) {
-            geometry.attributes.position.setXYZ(i, 0, 0, 0);
-        }
-        geometry.attributes.position.needsUpdate = true;
-
-        if (!geometry.attributes.velocity) {
-            log('creating geometry.attributes.velocity');
-            const count = geometry.attributes.position.count;
-            const buffer = new BufferAttribute(new Float32Array(count * 3), 3);
-            geometry.setAttribute('velocity', buffer);
-        };
-        for (let i = 0; i < geometry.attributes.velocity.count; i++) {
-            const random = () => Math.random() - 0.5;
-            geometry.attributes.velocity.setXYZ(i, random(), random(), random());
-        }
-        geometry.attributes.velocity.needsUpdate = true;
-
-        const material = new PointsMaterial({
-            transparent: true,
-            color: 0xff0000,
-            blending: AdditiveBlending,
-            ...material_description
-        });
-
-        const emitter = new Points(geometry, material);
-        emitter.position.set(0, 20, 0);
-
-        this.addObjectToScene(emitter);
+        const emitter = new Object3D();
+        this.#scene.add(emitter);
+        const id = this.assignIdToObject(emitter);
 
         this.submitCommand({
             type: 'createParticleSystem',
-            emitter_id: emitter.userData.meshId
+            texture_id: map.uuid,
+            emitter_id: id,
+            particle_count: 1_000
         });
 
         return emitter;
@@ -326,9 +298,8 @@ export class Graphics {
 
         // for every renderable...
         for (const [id, object] of this.#idToObject) {
-            // calculate offset into array given mesh ID
+            // find its position in the transform buffer
             const offset = id * this.#elementsPerTransform;
-
             // copy world matrix into transform buffer
             for (let i = 0; i < this.#elementsPerTransform; i++) {
                 this.#array[offset + i] = object.matrixWorld.elements[i];
@@ -364,34 +335,40 @@ export class Graphics {
     /**
      * Ship a texture to the graphics backend, but only if the texture has not already been uploaded
      */
-    private uploadTexture(map: Texture, ui: boolean) {
-        if (this.#textureCache.has(map.uuid)) return; // image is already cached
+    private uploadTexture(texture: Texture, ui: boolean) {
+        if (this.#textureCache.has(texture.uuid)) return;
+        this.#textureCache.add(texture.uuid);
 
-        const { image, uuid } = map;
-        const { width, height } = image;
-
-        // grab raw image data from the texture
-        const { ctx } = GraphicsUtils.scratchCanvasContext(width, height);
-        ctx.drawImage(image, 0, 0);
-        const imageData = ctx.getImageData(0, 0, width, height);
-
-        this.#textureCache.add(uuid);
+        const imageData = GraphicsUtils.getRawImageData(texture.image);
 
         this.submitCommand({
             type: 'uploadTexture',
-            imageId: uuid,
+            imageId: texture.uuid,
             imageDataBuffer: imageData.data.buffer,
-            imageWidth: width,
-            imageHeight: height,
+            imageWidth: texture.image.width,
+            imageHeight: texture.image.height,
             ui,
-        }, false, imageData.data.buffer);
+        }, true, imageData.data.buffer);
     }
 
-    private extractMaterialTextures(material: Material, ui: boolean) {
-        // @ts-ignore - properties may not exist, but I check for that
-        const { map, alphaMap } = material;
-        if (map) this.uploadTexture(map, ui);
-        if (alphaMap) this.uploadTexture(alphaMap, ui);
+    private extractMaterialTextures(material: ShaderMaterial, ui: boolean) {
+        // find all properties that end with the word 'map'
+        // (ThreeJS uses this naming convention for textures)
+        (Object.getOwnPropertyNames(material) as (keyof Material)[])
+            .filter(key => (key.slice(-3).toLocaleLowerCase() === 'map') && (material[key] !== null))
+            .map(key => material[key] as Texture)
+            .forEach(texture => {
+                this.uploadTexture(texture, ui);
+                delete texture.image;
+            });
+
+        if (material.uniforms) {
+            Object.getOwnPropertyNames(material.uniforms)
+                .map(key => material.uniforms[key])
+                .forEach(uniform => {
+                    if (uniform.value && uniform.value instanceof Texture) this.uploadTexture(uniform.value, ui);
+                });
+        }
     }
 
     /**
@@ -401,9 +378,11 @@ export class Graphics {
      * Current supported objects: `Mesh`, `Sprite`, `Light`
      */
     addObjectToScene(object: Object3D, ui = false) {
+        // place object in scene heirarchy
         if (object.parent) object.parent.add(object);
         else this.#scene.add(object);
 
+        // loop through object's internal heirarchy & upload all renderables to backend
         object.traverse((node) => {
             // debugger;
             if (node instanceof Mesh || node instanceof Points || node instanceof Sprite || node instanceof Light) {
@@ -417,28 +396,13 @@ export class Graphics {
 
                     for (const material of materials) {
                         this.extractMaterialTextures(material, ui);
-                        // https://github.com/stickyfingies/3-AD/issues/1
-                        // ! Delete image data so ThreeJS::Object3D::toJSON() doesn't try to serialize
-                        // ! images - as this is a VERY costly procedure which 3-AD already does faster.
-                        // ? can this process be automated
-                        if (material.mapcap) delete material.matcap.image;
-                        if (material.map) delete material.map.image;
-                        if (material.alphaMap) delete material.alphaMap.image; //
-                        if (material.bumpMap) delete material.bumpMap.image;
-                        if (material.normalMap) delete material.normalMap.image; //
-                        if (material.displacementMap) delete material.displacementMap.image;
-                        if (material.roughnessMap) delete material.roughnessMap.image;
-                        if (material.metalnessMap) delete material.metalnessMap.image;
-                        if (material.emissiveMap) delete material.emissiveMap.image;
-                        if (material.specularMap) delete material.specularMap.image; //
-                        if (material.envMap) delete material.envMap.image;
-                        if (material.lightMap) delete material.lightMap.image;
-                        if (material.aoMap) delete material.aoMap.image;
                     }
                 }
 
                 // A very expensive call if `node.material` contains images.
                 const json = node.toJSON();
+
+                if (node instanceof Points) console.log(json);
 
                 // send that bitch to the backend
                 this.submitCommand({
